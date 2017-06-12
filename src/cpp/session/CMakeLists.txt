@@ -131,6 +131,7 @@ set (SESSION_SOURCE_FILES
    modules/SessionProjectTemplate.cpp
    modules/SessionRAddins.cpp
    modules/SessionRCompletions.cpp
+   modules/SessionReticulate.cpp
    modules/SessionRHooks.cpp
    modules/SessionRParser.cpp
    modules/SessionRPubs.cpp
