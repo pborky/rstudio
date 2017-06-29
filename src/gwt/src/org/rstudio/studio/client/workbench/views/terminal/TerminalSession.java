@@ -84,6 +84,7 @@ public class TerminalSession extends XTermWidget
       cwd_ = info.getCwd();
       autoCloseMode_ = info.getAutoCloseMode();
       zombie_ = info.getZombie();
+      trackEnv_ = info.getTrackEnv();
       
       setTitle(info.getTitle());
       socket_ = new TerminalSessionSocket(this, this);
@@ -124,34 +125,64 @@ public class TerminalSession extends XTermWidget
       setNewTerminal(getHandle() == null);
       
       socket_.resetDiagnostics();
+      trackEnv_ = uiPrefs_.terminalTrackEnvironment().getValue();
 
       server_.startTerminal(getShellType(),
             getCols(), getRows(), getHandle(), getCaption(), 
             getTitle(), getSequence(), getAltBufferActive(), getCwd(), 
-            getZombie(), uiPrefs_.terminalTrackEnvironment().getValue(),
+            getZombie(), getTrackEnv(),
             new ServerRequestCallback<ConsoleProcess>()
       {
          @Override
          public void onResponseReceived(ConsoleProcess consoleProcess)
          {
             consoleProcess_ = consoleProcess;
-            if (consoleProcess_ == null)
+            if (consoleProcess_ == null || consoleProcess_.getProcessInfo() == null)
             {
                writeError("No ConsoleProcess received from server");
                disconnect(false);
                return;
             }
 
-            if (getInteractionMode() != ConsoleProcessInfo.INTERACTION_ALWAYS)
+            if (consoleProcess_.getProcessInfo().getInteractionMode() != 
+                  ConsoleProcessInfo.INTERACTION_ALWAYS)
             {
                writeError("Unsupported ConsoleProcess interaction mode");
                disconnect(false);
                return;
             } 
             
+            if (!consoleProcess_.getProcessInfo().getCaption().equals(caption_))
+            {
+               writeError("Server returned different caption than requested");
+               disconnect(false);
+               return;
+            }
+            
+            if (terminalHandle_ == null)
+            {
+               writeError("It is very sad");
+               disconnect(false);
+               return;
+            }
+            
+            if (terminalHandle_ != null &&
+                  !consoleProcess_.getProcessInfo().getHandle().equals(terminalHandle_))
+            {
+               writeError("Server returned different terminal handle than requested");
+               disconnect(false);
+               return;
+            }
+            
             cols_ = consoleProcess_.getProcessInfo().getCols();
             rows_ = consoleProcess_.getProcessInfo().getRows();
-
+            terminalHandle_ = consoleProcess_.getProcessInfo().getHandle();
+            shellType_ = consoleProcess_.getProcessInfo().getShellType();
+            restarted_ = consoleProcess_.getProcessInfo().getRestarted();
+            autoCloseMode_ = consoleProcess_.getProcessInfo().getAutoCloseMode();
+            zombie_ = consoleProcess_.getProcessInfo().getZombie();
+            altBufferActive_ = consoleProcess_.getProcessInfo().getAltBufferActive();
+ 
             addHandlerRegistration(addResizeTerminalHandler(TerminalSession.this));
             addHandlerRegistration(addXTermTitleHandler(TerminalSession.this));
             addHandlerRegistration(eventBus_.addHandler(SessionSerializationEvent.TYPE, TerminalSession.this));
@@ -460,14 +491,6 @@ public class TerminalSession extends XTermWidget
             new SimpleRequestCallback<Void>("Interrupting child"));
    }
    
-   private int getInteractionMode()
-   {
-      if (consoleProcess_ != null)
-         return consoleProcess_.getProcessInfo().getInteractionMode();
-      else
-         return ConsoleProcessInfo.INTERACTION_NEVER;
-   } 
-
    protected void addHandlerRegistration(HandlerRegistration reg)
    {
       registrations_.add(reg);
@@ -481,8 +504,8 @@ public class TerminalSession extends XTermWidget
 
    protected void writeError(String msg)
    {
-      socket_.dispatchOutput(AnsiCode.ForeColor.RED + "Error: " + 
-            msg + AnsiCode.DEFAULTCOLORS, false /*detectLocalEcho*/);
+      Debug.log(msg);
+      writeln(AnsiCode.ForeColor.RED + "Error: " + msg + AnsiCode.DEFAULTCOLORS);
    }
 
    @Override
@@ -532,21 +555,12 @@ public class TerminalSession extends XTermWidget
     */
    public String getHandle()
    {
-      if (consoleProcess_ == null)
-      {
-         return terminalHandle_;
-      }
-      terminalHandle_ = consoleProcess_.getProcessInfo().getHandle();
       return terminalHandle_;
    }
    
    public int getShellType()
    {
-      if (consoleProcess_ == null)
-      {
-         return shellType_;
-      }
-      return consoleProcess_.getProcessInfo().getShellType();
+      return shellType_;
    }
 
    /**
@@ -555,7 +569,7 @@ public class TerminalSession extends XTermWidget
     */
    public boolean getRestarted()
    {
-      return consoleProcess_.getProcessInfo().getRestarted();
+      return restarted_;
    }
 
    /**
@@ -815,11 +829,6 @@ public class TerminalSession extends XTermWidget
    
    public int getAutoCloseMode()
    {
-      if (consoleProcess_ == null)
-      {
-         return autoCloseMode_;
-      }
-      autoCloseMode_ = consoleProcess_.getProcessInfo().getAutoCloseMode();
       return autoCloseMode_;
    }
    
@@ -829,21 +838,12 @@ public class TerminalSession extends XTermWidget
     */
    public boolean getZombie()
    {
-      if (consoleProcess_ == null)
-      {
-         return zombie_;
-      }
-      zombie_ = consoleProcess_.getProcessInfo().getZombie();
       return zombie_;
    }
    
    public boolean getTrackEnv()
    {
-      if (consoleProcess_ == null)
-      {
-         return true;
-      }
-      return consoleProcess_.getProcessInfo().getTrackEnv();
+      return trackEnv_;
    }
    
    private HandlerRegistrations registrations_ = new HandlerRegistrations();
@@ -870,6 +870,8 @@ public class TerminalSession extends XTermWidget
    private String cwd_; 
    private int autoCloseMode_;
    private boolean zombie_; // process closed but UI kept alive
+   private boolean restarted_;
+   private boolean trackEnv_;
 
    // Injected ---- 
    private WorkbenchServerOperations server_; 

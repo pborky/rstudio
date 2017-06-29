@@ -74,7 +74,8 @@ public class TerminalList implements Iterable<String>,
             term.getAltBufferActive(),
             term.getCwd(),
             term.getAutoCloseMode(),
-            term.getZombie()));
+            term.getZombie(),
+            term.getTrackEnv()));
    }
 
    /**
@@ -286,7 +287,7 @@ public class TerminalList implements Iterable<String>,
    public void createNewTerminal()
    {
       ConsoleProcessInfo info = ConsoleProcessInfo.createNewTerminalInfo(
-            nextTerminalSequence());
+            nextTerminalSequence(), uiPrefs_.terminalTrackEnvironment().getValue());
       startTerminal(info);
    }
 
@@ -310,7 +311,7 @@ public class TerminalList implements Iterable<String>,
       }
       
       ConsoleProcessInfo info = ConsoleProcessInfo.createNamedTerminalInfo(
-            nextTerminalSequence(), caption);
+            nextTerminalSequence(), caption, uiPrefs_.terminalTrackEnvironment().getValue());
 
       startTerminal(info);
       return true;
