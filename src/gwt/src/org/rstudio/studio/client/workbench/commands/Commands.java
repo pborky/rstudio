@@ -167,6 +167,8 @@ public abstract class
    public abstract AppCommand pasteLastYank();
    public abstract AppCommand insertAssignmentOperator();
    public abstract AppCommand insertPipeOperator();
+   public abstract AppCommand openNextFileOnFilesystem();
+   public abstract AppCommand openPreviousFileOnFilesystem();
  
    // Projects
    public abstract AppCommand newProject();
@@ -394,6 +396,7 @@ public abstract class
    public abstract AppCommand nextTerminal();
    public abstract AppCommand showTerminalInfo();
    public abstract AppCommand interruptTerminal();
+   public abstract AppCommand sendTerminalToEditor();
     
    // Help
    public abstract AppCommand helpBack();

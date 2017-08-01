@@ -21,8 +21,10 @@ import org.rstudio.core.client.AnsiCode;
 import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.HandlerRegistrations;
+import org.rstudio.core.client.ResultCallback;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.studio.client.RStudioGinjector;
+import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.application.events.SessionSerializationEvent;
 import org.rstudio.studio.client.application.events.SessionSerializationHandler;
@@ -74,25 +76,11 @@ public class TerminalSession extends XTermWidget
       super(cursorBlink, focus);
       
       RStudioGinjector.INSTANCE.injectMembers(this);
-      sequence_ = info.getTerminalSequence();
-      terminalHandle_ = info.getHandle();
+      procInfo_ = info;
       hasChildProcs_ = new Value<Boolean>(info.getHasChildProcs());
-      shellType_ = info.getShellType();
-      cols_ = info.getCols();
-      rows_ = info.getRows();
-      altBufferActive_ = info.getAltBufferActive();
-      cwd_ = info.getCwd();
-      autoCloseMode_ = info.getAutoCloseMode();
-      zombie_ = info.getZombie();
-      trackEnv_ = info.getTrackEnv();
       
       setTitle(info.getTitle());
       socket_ = new TerminalSessionSocket(this, this);
-
-      if (StringUtil.isNullOrEmpty(info.getCaption()))
-         caption_ = "Terminal " + sequence_;
-      else
-         caption_ = info.getCaption();
 
       setHeight("100%");
    }
@@ -116,21 +104,22 @@ public class TerminalSession extends XTermWidget
     *     to the remote terminal (RPC or WebSocket)
     * (3) start (or reconnect to) the server-side process for the terminal
     */
-   public void connect()
+   public void connect(final ResultCallback<Boolean, String> callback)
    {
       if (connected_ || connecting_ || terminating_)
+      {
+         callback.onSuccess(connected_ && !terminating_);
          return;
+      }
 
       connecting_ = true;
-      setNewTerminal(getHandle() == null);
+      setNewTerminal(StringUtil.isNullOrEmpty(getHandle()));
       
       socket_.resetDiagnostics();
       trackEnv_ = uiPrefs_.terminalTrackEnvironment().getValue();
 
-      server_.startTerminal(getShellType(),
-            getCols(), getRows(), getHandle(), getCaption(), 
-            getTitle(), getSequence(), getAltBufferActive(), getCwd(), 
-            getZombie(), getTrackEnv(),
+      server_.startTerminal(
+            getProcInfo(),
             new ServerRequestCallback<ConsoleProcess>()
       {
          @Override
@@ -139,60 +128,48 @@ public class TerminalSession extends XTermWidget
             consoleProcess_ = consoleProcess;
             if (consoleProcess_ == null || consoleProcess_.getProcessInfo() == null)
             {
-               writeError("No ConsoleProcess received from server");
                disconnect(false);
+               callback.onFailure("No Terminal ConsoleProcess received from server");
                return;
             }
 
-            if (consoleProcess_.getProcessInfo().getInteractionMode() != 
-                  ConsoleProcessInfo.INTERACTION_ALWAYS)
+            if (consoleProcess_.getProcessInfo().getCaption().isEmpty())
             {
-               writeError("Unsupported ConsoleProcess interaction mode");
                disconnect(false);
+               callback.onFailure("Empty Terminal caption");
                return;
             } 
-            
-            if (!consoleProcess_.getProcessInfo().getCaption().equals(caption_))
+
+            if (consoleProcess_.getProcessInfo().getTerminalSequence() <= ConsoleProcessInfo.SEQUENCE_NO_TERMINAL)
             {
-               writeError("Server returned different caption than requested");
                disconnect(false);
+               callback.onFailure("Undetermined Terminal sequence");
                return;
-            }
-            
-            if (terminalHandle_ == null)
-            {
-               writeError("It is very sad");
-               disconnect(false);
-               return;
-            }
-            
-            if (terminalHandle_ != null &&
-                  !consoleProcess_.getProcessInfo().getHandle().equals(terminalHandle_))
-            {
-               writeError("Server returned different terminal handle than requested");
-               disconnect(false);
-               return;
-            }
-            
-            cols_ = consoleProcess_.getProcessInfo().getCols();
-            rows_ = consoleProcess_.getProcessInfo().getRows();
-            terminalHandle_ = consoleProcess_.getProcessInfo().getHandle();
-            shellType_ = consoleProcess_.getProcessInfo().getShellType();
-            restarted_ = consoleProcess_.getProcessInfo().getRestarted();
-            autoCloseMode_ = consoleProcess_.getProcessInfo().getAutoCloseMode();
-            zombie_ = consoleProcess_.getProcessInfo().getZombie();
-            altBufferActive_ = consoleProcess_.getProcessInfo().getAltBufferActive();
- 
+            } 
+              
+            // Keep an instance of the ProcessInfo so it is available even if the terminal
+            // goes offline, which causes consoleProcess_ to become null.
+            procInfo_ = consoleProcess_.getProcessInfo();
+
             addHandlerRegistration(addResizeTerminalHandler(TerminalSession.this));
             addHandlerRegistration(addXTermTitleHandler(TerminalSession.this));
             addHandlerRegistration(eventBus_.addHandler(SessionSerializationEvent.TYPE, TerminalSession.this));
             
-            if (!consoleProcess_.getProcessInfo().getAltBufferActive() && altBufferActive())
+            showAltAfterReload_ = false;
+            if (!getProcInfo().getAltBufferActive() && xtermAltBufferActive())
             {
                // If server reports the terminal is not showing alt-buffer, but local terminal
                // emulator is showing alt-buffer, terminal was killed while running
-               // a full-screen program. Switch local terminal back to primary buffer.
+               // a full-screen program. Switch local terminal back to primary buffer before
+               // we reload the cache from the server.
                showPrimaryBuffer();
+            }
+            else if (getProcInfo().getAltBufferActive() && !xtermAltBufferActive())
+            {
+               // Server is targeting alt-buffer, but local terminal emulator is showing
+               // the main buffer. Possible when refreshing with a full-screen program running.
+               // Switch to alt-buffer after we reload the cache from the server.
+               showAltAfterReload_ = true;
             }
             
             socket_.connect(consoleProcess_, new TerminalSessionSocket.ConnectCallback()
@@ -209,13 +186,14 @@ public class TerminalSession extends XTermWidget
                         connecting_ = false;
                         sendUserInput();
                         eventBus_.fireEvent(new TerminalSessionStartedEvent(TerminalSession.this));
+                        callback.onSuccess(true /*connected*/);
                      }
 
                      @Override
                      public void onError(ServerError error)
                      {
                         disconnect(false);
-                        writeError(error.getUserMessage());
+                        callback.onFailure(error.getUserMessage());
                      }
                   });
 
@@ -224,8 +202,8 @@ public class TerminalSession extends XTermWidget
                @Override
                public void onError(String errorMsg)
                {
-                  writeError(errorMsg);
                   disconnect(false);
+                  callback.onFailure(errorMsg);
                   return;
                }
             });
@@ -235,9 +213,8 @@ public class TerminalSession extends XTermWidget
          public void onError(ServerError error)
          {
             disconnect(false);
-            writeError(error.getUserMessage());
+            callback.onFailure(error.getUserMessage());
          }
-
       });
    }
    
@@ -248,6 +225,7 @@ public class TerminalSession extends XTermWidget
    public void disconnect(boolean permanent)
    {
       inputQueue_.setLength(0);
+      inputSequence_ = ShellInput.IGNORE_SEQUENCE;
       socket_.disconnect(permanent);
       registrations_.removeHandler();
       consoleProcess_ = null;
@@ -256,24 +234,20 @@ public class TerminalSession extends XTermWidget
       restartSequenceWritten_ = false;
       reloading_ = false;
       deferredOutput_.clear();
-      if (permanent)
-      {
-         zombie_ = true;
-      }
    }
 
    @Override
    public void onResizeTerminal(ResizeTerminalEvent event)
    {
-      cols_ = event.getCols();
-      rows_ = event.getRows();
+      procInfo_.setDimensions(event.getCols(), event.getRows());
       consoleProcess_.resizeTerminal(
-            cols_, rows_,
+            event.getCols(), event.getRows(),
             new VoidServerRequestCallback() 
             {
                @Override
                public void onError(ServerError error)
                {
+                  Debug.logError(error);
                   writeError(error.getUserMessage());
                }
             });
@@ -301,7 +275,25 @@ public class TerminalSession extends XTermWidget
       if (!connected_)
       {
          // accumulate user input until we are connected, then play it back
-         connect();
+         connect(new ResultCallback<Boolean, String>()
+         {
+            @Override
+            public void onSuccess(Boolean connected) 
+            {
+               if (connected)
+               {
+                  sendUserInput();
+                  return;
+               }
+            }
+            
+            @Override
+            public void onFailure(String msg)
+            {
+               Debug.log(msg);
+               writeError(msg);
+            }
+         });
          return;
       }
 
@@ -334,10 +326,10 @@ public class TerminalSession extends XTermWidget
          inputQueue_.setLength(0);
       }
 
-      // On Windows, rapid typing sometimes causes RPC messages for writeStandardInput
+      // On desktop, rapid typing sometimes causes RPC messages for writeStandardInput
       // to arrive out of sequence in the terminal; send a sequence number with each
       // message so server can put messages back in order
-      if (BrowseCap.isWindowsDesktop() && 
+      if (Desktop.isDesktop() && 
             consoleProcess_.getChannelMode() == ConsoleProcessInfo.CHANNEL_RPC)
       {
          if (inputSequence_ == ShellInput.IGNORE_SEQUENCE)
@@ -376,6 +368,7 @@ public class TerminalSession extends XTermWidget
                @Override
                public void onError(ServerError error)
                {
+                  Debug.logError(error);
                   writeError(error.getUserMessage());
                }
             });
@@ -414,7 +407,7 @@ public class TerminalSession extends XTermWidget
             uiPrefs_.terminalLocalEcho().getValue() &&
             !BrowseCap.isWindowsDesktop() && 
             !getHasChildProcs() &&
-            !altBufferActive() &&
+            !xtermAltBufferActive() &&
             cursorAtEOL();
    }
 
@@ -444,21 +437,9 @@ public class TerminalSession extends XTermWidget
     */
    public String getCaption()
    {
-      return caption_;
+      return procInfo_.getCaption();
    }
 
-   /**
-    * Set caption, user customizable identifier for this terminal session.
-    * @param caption new caption
-    */
-   public void setCaption(String caption)
-   {
-      if (StringUtil.isNullOrEmpty(caption))
-         return;
-
-      caption_ = caption;
-   }
-   
    /**
     * Erase the scrollback buffer on the client and server.
     */
@@ -474,14 +455,6 @@ public class TerminalSession extends XTermWidget
             new SimpleRequestCallback<Void>("Clearing Buffer"));
    }
 
-   /**
-    * Show modal dialog with information about this terminal session.
-    */
-   public void showTerminalInfo()
-   {
-      new TerminalInfoDialog(this, socket_).showModal();
-   }
-   
    /**
     * Send an interrupt (SIGINT) to the terminal's child process
     */
@@ -504,7 +477,6 @@ public class TerminalSession extends XTermWidget
 
    protected void writeError(String msg)
    {
-      Debug.log(msg);
       writeln(AnsiCode.ForeColor.RED + "Error: " + msg + AnsiCode.DEFAULTCOLORS);
    }
 
@@ -512,7 +484,20 @@ public class TerminalSession extends XTermWidget
    protected void onLoad()
    {
       super.onLoad();
-      connect();
+      connect(new ResultCallback<Boolean, String>()
+      {
+         @Override
+         public void onSuccess(Boolean connected) 
+         {
+         }
+
+         @Override
+         public void onFailure(String msg)
+         {
+            Debug.log(msg);
+            writeError(msg);
+         }
+      });
    }
 
    @Override
@@ -529,19 +514,33 @@ public class TerminalSession extends XTermWidget
       super.setVisible(isVisible);
       if (isVisible)
       {
-         connect();
-
-         // Inform the terminal that there may have been a resize. This could 
-         // happen on first display, or if the terminal was hidden behind other
-         // terminal sessions and there was a resize.
-         // A delay is needed to give the xterm.js implementation an
-         // opportunity to be ready for this.
-         Scheduler.get().scheduleDeferred(new ScheduledCommand()
+         connect(new ResultCallback<Boolean, String>()
          {
             @Override
-            public void execute()
+            public void onSuccess(Boolean connected) 
             {
-               onResize();
+               if (connected)
+               {
+                  // Inform the terminal that there may have been a resize. This could 
+                  // happen on first display, or if the terminal was hidden behind other
+                  // terminal sessions and there was a resize.
+                  // A delay is needed to give the xterm.js implementation an
+                  // opportunity to be ready for this.
+                  Scheduler.get().scheduleDeferred(new ScheduledCommand()
+                  {
+                     @Override
+                     public void execute()
+                     {
+                        onResize();
+                     }
+                  });
+               }
+            }
+
+            @Override
+            public void onFailure(String msg)
+            {
+               Debug.log(msg);
             }
          });
       }
@@ -555,23 +554,9 @@ public class TerminalSession extends XTermWidget
     */
    public String getHandle()
    {
-      return terminalHandle_;
+      return procInfo_.getHandle(); 
    }
    
-   public int getShellType()
-   {
-      return shellType_;
-   }
-
-   /**
-    * Is this terminal one that was previously running, terminated, and now restarted?
-    * @return true if previously existed and has been restarted
-    */
-   public boolean getRestarted()
-   {
-      return restarted_;
-   }
-
    /**
     * Does this terminal's shell program (i.e. bash) have any child processes?
     * @return true if it has child processes, or it hasn't been determined yet
@@ -593,45 +578,6 @@ public class TerminalSession extends XTermWidget
    public HandlerRegistration addHasChildProcsChangeHandler(ValueChangeHandler<Boolean> handler)
    {
       return hasChildProcs_.addValueChangeHandler(handler);
-   }
-
-   /**
-    * Update current-working-directory 
-    * @param cwd new directory
-    */
-   public void setCwd(String cwd)
-   {
-      cwd_ = cwd;
-   }
-
-   /**
-    * The sequence number of the terminal, used in creation of the default
-    * title, e.g. "Terminal 3".
-    * @return The sequence number that was passed to the constructor.
-    */
-   public int getSequence()
-   {
-      return sequence_;
-   }
-
-   public int getCols()
-   {
-      return cols_;
-   }
-
-   public int getRows()
-   {
-      return rows_;
-   }
-   
-   public boolean getAltBufferActive()
-   {
-      return altBufferActive_;
-   }
-   
-   public String getCwd()
-   {
-      return cwd_;
    }
 
    /**
@@ -737,7 +683,10 @@ public class TerminalSession extends XTermWidget
    private void fetchNextChunk(final int chunkToFetch)
    {
       if (!shellSupportsReload())
+      {
+         reloading_ = false;
          return;
+      }
 
       Scheduler.get().scheduleDeferred(new ScheduledCommand()
       {
@@ -761,7 +710,7 @@ public class TerminalSession extends XTermWidget
                      else
                      {
                         writeRestartSequence();
-                        if (zombie_)
+                        if (procInfo_.getZombie())
                            showZombieMessage();
                         reloading_ = false;
                         for (String outputStr : deferredOutput_)
@@ -775,6 +724,7 @@ public class TerminalSession extends XTermWidget
                   @Override
                   public void onError(ServerError error)
                   {
+                     Debug.logError(error);
                      writeError(error.getUserMessage());
                      reloading_ = false;
                      deferredOutput_.clear();
@@ -788,12 +738,20 @@ public class TerminalSession extends XTermWidget
    public void showZombieMessage()
    {
       writeln("[Process completed]");
+      write("[Exit code: ");
+      if (procInfo_.getExitCode() != null)
+         write(Integer.toString(procInfo_.getExitCode()));
+      else
+         write("Unknown");
+      writeln("]");
    }
 
    /**
     * Write to terminal after a terminal has restarted (on the server). We
     * use this to cleanup the current line, as a new prompt is typically
     * output by the server upon reconnect.
+    * 
+    * For a full-screen program, switch the terminal back into the alt-buffer.
     */
    public void writeRestartSequence()
    {
@@ -816,6 +774,12 @@ public class TerminalSession extends XTermWidget
 
          restartSequenceWritten_ = true;
       }
+
+      if (showAltAfterReload_)
+      {
+         showAltBuffer();
+         showAltAfterReload_ = false;
+      }
    }
    
    /**
@@ -827,34 +791,41 @@ public class TerminalSession extends XTermWidget
       newTerminal_ = isNew;
    }
    
-   public int getAutoCloseMode()
+   public ConsoleProcessInfo getProcInfo()
    {
-      return autoCloseMode_;
+      return procInfo_;
    }
    
-   /**
-    * @return true if session represents a terminal whose process has exited,
-    * but terminal output remains visible; cannot be reconnected
-    */
-   public boolean getZombie()
+   public void getBuffer(final boolean stripAnsiCodes, final ResultCallback<String, String> callback)
    {
-      return zombie_;
+      consoleProcess_.getTerminalBuffer(stripAnsiCodes, new ServerRequestCallback<ProcessBufferChunk>()
+      {
+         @Override
+         public void onResponseReceived(final ProcessBufferChunk chunk)
+         {
+            String buffer = chunk.getChunk();
+            callback.onSuccess(buffer);
+         }
+
+         @Override
+         public void onError(ServerError error)
+         {
+            Debug.logError(error);
+         }
+      });
    }
    
-   public boolean getTrackEnv()
+   public TerminalSessionSocket getSocket()
    {
-      return trackEnv_;
+      return socket_;
    }
-   
+
    private HandlerRegistrations registrations_ = new HandlerRegistrations();
    private TerminalSessionSocket socket_;
    private ConsoleProcess consoleProcess_;
-   private String caption_;
+   private ConsoleProcessInfo procInfo_;
    private String title_;
-   private final int sequence_;
-   private String terminalHandle_;
    private final HasValue<Boolean> hasChildProcs_;
-   private int shellType_;
    private boolean connected_;
    private boolean connecting_;
    private boolean terminating_;
@@ -864,14 +835,7 @@ public class TerminalSession extends XTermWidget
    private StringBuilder inputQueue_ = new StringBuilder();
    private int inputSequence_ = ShellInput.IGNORE_SEQUENCE;
    private boolean newTerminal_ = true;
-   private int cols_;
-   private int rows_;
-   private boolean altBufferActive_;
-   private String cwd_; 
-   private int autoCloseMode_;
-   private boolean zombie_; // process closed but UI kept alive
-   private boolean restarted_;
-   private boolean trackEnv_;
+   private boolean showAltAfterReload_;
 
    // Injected ---- 
    private WorkbenchServerOperations server_; 

@@ -359,6 +359,19 @@ private:
    [self performClipboardAction: @selector(paste:)];
 }
 
+- (void) setClipboardText: (NSString*) text
+{
+   NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+   [pasteboard declareTypes: [NSArray arrayWithObject: NSStringPboardType] owner: nil];
+   [pasteboard setString: text forType: NSStringPboardType];
+}
+
+- (NSString*) getClipboardText
+{
+   NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
+   return [pasteboard stringForType: NSStringPboardType];
+}
+
 - (NSString*) getUriForPath: (NSString*) path
 {
    NSURL* url = [NSURL fileURLWithPath: resolveAliasedPath(path)];
@@ -697,8 +710,12 @@ private:
       imageFileType = NSPNGFileType;
    }
    
+   
    // write to file
-   NSBitmapImageRep *imageRep = (NSBitmapImageRep*) [[image representations] objectAtIndex: 0];
+   CGImageRef cgRef = [image CGImageForProposedRect: NULL
+                                            context: nil
+                                              hints: nil];
+   NSBitmapImageRep *imageRep = [[NSBitmapImageRep alloc] initWithCGImage: cgRef];
    NSData *data = [imageRep representationUsingType: imageFileType properties: properties];
    if (![data writeToFile: targetPath atomically: NO])
    {

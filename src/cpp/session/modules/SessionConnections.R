@@ -244,12 +244,12 @@ options(connectionObserver = list(
       list(
          name = "ODBC",
          package = "odbc",
-         version = "1.0.1.9000"
+         version = "1.1.1"
       ),
       list(
          name = "Spark",
          package = "sparklyr",
-         version = "0.5.5"
+         version = "0.5.6"
       )
    )
 })
@@ -495,7 +495,12 @@ options(connectionObserver = list(
    }
 
    connectionContext <- .rs.rpc.get_new_connection_context()$connectionsList
-   connectionInfo <- Filter(function(e) e$package == package & e$name == name, connectionContext)
+   connectionInfo <- Filter(
+      function(e)
+        identical(as.character(e$package), as.character(package)) &
+        identical(as.character(e$name), as.character(name)),
+      connectionContext
+   )
 
    if (length(connectionInfo) != 1) {
       return(.rs.error(
@@ -554,4 +559,9 @@ options(connectionObserver = list(
    lapply(disconnectCalls, function(e) e())
 
    .rs.scalar(error)
+})
+
+.rs.addJsonRpcHandler("connection_add_package", function(package) {
+   extensionPath <- system.file("rstudio/connections.dcf", package = package)
+   invisible(.Call("rs_connectionAddPackage", package, extensionPath))
 })
