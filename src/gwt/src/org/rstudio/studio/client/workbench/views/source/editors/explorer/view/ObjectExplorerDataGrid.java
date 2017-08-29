@@ -851,6 +851,9 @@ public class ObjectExplorerDataGrid
       else if (n == 3)
          buttonWidth = 48;
 
+      // add a bit of extra padding for the scroll bar
+      buttonWidth += 12;
+      
       int totalWidth = getOffsetWidth();
       int remainingWidth = totalWidth - otherWidth - buttonWidth - 20;
       
@@ -1029,12 +1032,13 @@ public class ObjectExplorerDataGrid
    
    private void setFocusDeferred(final boolean focused)
    {
-      Scheduler.get().scheduleDeferred(new ScheduledCommand()
+      Scheduler.get().scheduleFinally(new ScheduledCommand()
       {
          @Override
          public void execute()
          {
             setFocus(focused);
+            restoreScrollPosition();
          }
       });
    }
@@ -1165,6 +1169,8 @@ public class ObjectExplorerDataGrid
    
    private void synchronize()
    {
+      saveScrollPosition();
+      
       final String filter = StringUtil.notNull(filter_).trim();
       
       // only include visible data in the table
@@ -1305,6 +1311,18 @@ public class ObjectExplorerDataGrid
       }
    }
    
+   private void saveScrollPosition()
+   {
+      scrollPosition_ = getScrollPanel().getVerticalScrollPosition();
+   }
+   
+   private void restoreScrollPosition()
+   {
+      if (scrollPosition_ != -1)
+         getScrollPanel().setVerticalScrollPosition(scrollPosition_);
+      scrollPosition_ = -1;
+   }
+   
    // Members ----
    
    private final ObjectExplorerHandle handle_;
@@ -1319,6 +1337,7 @@ public class ObjectExplorerDataGrid
    
    private final ListDataProvider<Data> dataProvider_;
    
+   private int scrollPosition_ = -1;
    private TableRowElement hoveredRow_;
    private boolean showAttributes_;
    private String filter_;
@@ -1331,7 +1350,9 @@ public class ObjectExplorerDataGrid
    private static final int DEFAULT_NAME_COLUMN_WIDTH = 180;
    private static final int DEFAULT_TYPE_COLUMN_WIDTH = 180;
    
-   private static final int DEFAULT_ROW_LIMIT = 200;
+   // NOTE: this should be synchronized with '.rs.explorer.defaultRowLimit' in
+   // SessionObjectExplorer.R
+   private static final int DEFAULT_ROW_LIMIT = 1000;
    
    private static final String ACTION_OPEN    = "open";
    private static final String ACTION_CLOSE   = "close";

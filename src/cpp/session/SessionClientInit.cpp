@@ -124,6 +124,9 @@ void handleClientInit(const boost::function<void()>& initFunction,
    if (error)
       LOG_ERROR(error);
    sessionInfo["temp_dir"] = tempDir.absolutePath();
+
+   // R_LIBS_USER
+   sessionInfo["r_libs_user"] = module_context::rLibsUser();
    
    // installed client version
    sessionInfo["client_version"] = http_methods::clientVersion();
@@ -316,6 +319,7 @@ void handleClientInit(const boost::function<void()>& initFunction,
    sessionInfo["allow_file_download"] = options.allowFileDownloads();
    sessionInfo["allow_file_upload"] = options.allowFileUploads();
    sessionInfo["allow_remove_public_folder"] = options.allowRemovePublicFolder();
+   sessionInfo["allow_full_ui"] = options.allowFullUI();
 
    // publishing may be disabled globally or just for external services, and
    // via configuration options or environment variables

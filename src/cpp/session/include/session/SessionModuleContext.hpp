@@ -111,6 +111,8 @@ core::FilePath tempFile(const std::string& prefix,
 
 core::FilePath tempDir();
 
+std::string rLibsUser();
+
 // find out the location of a binary
 core::FilePath findProgram(const std::string& name);
 
@@ -746,6 +748,8 @@ void addViewerHistoryEntry(const ViewerHistoryEntry& entry);
 
 core::Error recursiveCopyDirectory(const core::FilePath& fromDir,
                                    const core::FilePath& toDir);
+
+bool isSessionTempPath(core::FilePath filePath);
 
 std::string sessionTempDirUrl(const std::string& sessionTempPath);
 
