@@ -1,7 +1,7 @@
 /*
  * DesktopPosixApplicationLaunch.cpp
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-17 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -14,9 +14,15 @@
  */
 
 #include "DesktopApplicationLaunch.hpp"
-
 #include "DesktopPosixApplication.hpp"
+#include "DesktopOptions.hpp"
 
+#include <core/system/Environment.hpp>
+
+#include <boost/foreach.hpp>
+
+#include <QProcess>
+#include <QDebug>
 
 namespace rstudio {
 namespace desktop {
@@ -37,6 +43,8 @@ ApplicationLaunch::ApplicationLaunch() :
 {
    connect(app(), SIGNAL(messageReceived(QString)),
            this, SIGNAL(openFileRequest(QString)));
+
+   launchEnv_ = QProcessEnvironment::systemEnvironment();
 }
 
 void ApplicationLaunch::init(QString appName,
@@ -86,6 +94,31 @@ bool ApplicationLaunch::sendMessage(QString filename)
 QString ApplicationLaunch::startupOpenFileRequest() const
 {
    return app()->startupOpenFileRequest();
+}
+
+void ApplicationLaunch::launchRStudio(const std::vector<std::string>& args)
+{
+   QStringList argList;
+   BOOST_FOREACH(const std::string& arg, args)
+   {
+      argList.append(QString::fromStdString(arg));
+   }
+   QString exePath = QString::fromUtf8(
+      desktop::options().executablePath().absolutePath().c_str());
+
+   // temporarily set the library path
+   std::string ldPath = core::system::getenv("LD_LIBRARY_PATH");
+   core::system::setenv("LD_LIBRARY_PATH",
+                        launchEnv_.value(QString::fromUtf8("LD_LIBRARY_PATH")).toStdString());
+
+   // inherit the original environment in which the first application launch took place,
+   // and start RStudio in that environment
+   QProcess proc;
+   proc.setEnvironment(launchEnv_.toStringList());
+   proc.startDetached(exePath, argList);
+
+   // restore library path
+   core::system::setenv("LD_LIBRARY_PATH", ldPath);
 }
 
 } // namespace desktop

@@ -63,7 +63,8 @@ bool PosixApplication::event(QEvent* pEvent)
          {
             std::vector<std::string> args;
             args.push_back(filePath.absolutePath());
-            launchRStudio(args);
+            // TODO: fix this up
+            // launchRStudio(args);
          }
          else
          {
