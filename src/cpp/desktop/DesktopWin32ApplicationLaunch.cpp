@@ -18,6 +18,8 @@
 
 #include <QWidget>
 
+#include <core/system/Process.hpp>
+
 #include "DesktopOptions.hpp"
 
 /*
@@ -210,7 +212,7 @@ void ApplicationLaunch::launchRStudio(const std::vector<std::string>& args)
    core::system::ProcessOptions options;
    options.breakawayFromJob = true;
    options.detachProcess = true;
-   Error error = core::system::runProgram(
+   core::Error error = core::system::runProgram(
       desktop::options().executablePath().absolutePath(),
       args,
       "",
