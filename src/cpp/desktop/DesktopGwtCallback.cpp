@@ -979,10 +979,8 @@ void GwtCallback::openProjectInNewWindow(QString projectFilePath)
 void GwtCallback::openSessionInNewWindow(QString workingDirectoryPath)
 {
    workingDirectoryPath = resolveAliasedPath(workingDirectoryPath);
-   core::system::setenv(kRStudioInitialWorkingDir,
-                        workingDirectoryPath.toStdString());
-   // TODO: need to pass additional env here
-   pMainWindow_->launchRStudio();
+   pMainWindow_->launchRStudio(std::vector<std::string>(),
+                               workingDirectoryPath.toStdString());
 }
 
 void GwtCallback::openTerminal(QString terminalPath,

@@ -131,9 +131,10 @@ void MainWindow::launchSession(bool reload)
    }
 }
 
-void MainWindow::launchRStudio(const std::vector<std::string> &args)
+void MainWindow::launchRStudio(const std::vector<std::string> &args,
+                               const std::string& initialDir)
 {
-    pAppLauncher_->launchRStudio(args);
+    pAppLauncher_->launchRStudio(args, initialDir);
 }
 
 void MainWindow::onCloseWindowShortcut()

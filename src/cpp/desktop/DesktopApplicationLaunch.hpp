@@ -43,7 +43,8 @@ public:
 
    QString startupOpenFileRequest() const;
 
-   void launchRStudio(const std::vector<std::string>& args = std::vector<std::string>());
+   void launchRStudio(const std::vector<std::string>& args = std::vector<std::string>(),
+                      const std::string& initialWorkingDir = std::string());
 
 protected:
     explicit ApplicationLaunch();
